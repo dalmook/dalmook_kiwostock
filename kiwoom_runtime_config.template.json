@@ -1,0 +1,24 @@
+{
+  "base_url": "https://api.kiwoom.com",
+  "app_key": "YOUR_KIWOOM_APP_KEY",
+  "app_secret": "YOUR_KIWOOM_APP_SECRET",
+  "token": {},
+  "endpoints": {
+    "token_issue": "/oauth2/token",
+    "order_cash": "/api/dostk/ordr"
+  },
+  "tr_id": {
+    "quote_basic": "ka10001",
+    "order_cash_buy": "kt10000",
+    "order_cash_sell": "kt10001"
+  },
+  "runtime": {
+    "journal_path": "./runtime/journal.json",
+    "dry_run": true,
+    "invest_capital_krw": 3000000
+  },
+  "telegram": {
+    "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
+    "chat_id": "YOUR_TELEGRAM_CHAT_ID"
+  }
+}
