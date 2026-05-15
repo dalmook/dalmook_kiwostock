@@ -18,3 +18,12 @@ python3 kiwoom_stock_agent.py --config ./kiwoom_runtime_config.json
 ```bash
 python3 kiwoom_stock_agent.py --config ./kiwoom_runtime_config.json --live-once
 ```
+
+
+## 컨테이너가 바로 종료되는 경우
+- `--live-once`는 1회 실행 후 정상 종료입니다.
+- 상시 실행은 `--loop --interval 60` 사용하세요.
+
+```bash
+python3 kiwoom_stock_agent.py --config ./kiwoom_runtime_config.json --loop --interval 60
+```

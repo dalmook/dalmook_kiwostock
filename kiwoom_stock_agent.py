@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -131,16 +132,32 @@ class Agent:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="./kiwoom_runtime_config.json")
-    ap.add_argument("--live-once", action="store_true", help="호환 옵션(현재 1회 실행 기본)")
+    ap.add_argument("--live-once", action="store_true", help="1회 실행 후 종료")
+    ap.add_argument("--loop", action="store_true", help="주기 실행(컨테이너 상시 구동용)")
+    ap.add_argument("--interval", type=int, default=60, help="loop 모드 주기(초)")
     args = ap.parse_args()
 
     if not os.path.exists(args.config):
         raise SystemExit("config not found")
 
     agent = Agent(args.config)
-    agent.client.refresh_token()
-    agent._save()
-    print(json.dumps({"ok": True, "token_mode": agent.cfg.get("runtime", {}).get("token_content_type"), "live_once": bool(args.live_once)}, ensure_ascii=False))
+
+    def run_tick():
+        agent.client.refresh_token()
+        agent._save()
+        print(json.dumps({"ok": True, "token_mode": agent.cfg.get("runtime", {}).get("token_content_type"), "live_once": bool(args.live_once), "ts": now_iso()}, ensure_ascii=False), flush=True)
+
+    if args.loop:
+        interval = max(5, int(args.interval or 60))
+        while True:
+            try:
+                run_tick()
+            except Exception as e:
+                print(json.dumps({"ok": False, "error": str(e), "ts": now_iso()}, ensure_ascii=False), flush=True)
+            time.sleep(interval)
+        return
+
+    run_tick()
 
 
 if __name__ == "__main__":
