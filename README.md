@@ -1,42 +1,40 @@
 # dalmook_kiwostock
 
-키움 REST 기반 자동매매 에이전트 초안입니다.
+키움증권 자동매매(실전/드라이런) 스크립트입니다.
 
-## 핵심 기능
-- 실시간 시세 기반 시장 국면 분류(TREND_UP/RANGE/HIGH_VOL_EVENT/RISK_OFF)
-- 국면 + 백테스트 결과 기반 자동 전략 선택
-- KOSPI 상위 50 / KOSDAQ100 백테스트 스코어링
-- 백테스트 결과 파일 저장 + 결과 기반 우선 종목 자동 전환
-- 백테스트 파라미터(수수료/슬리피지) 그리드 탐색 최적화
-- 종목별 전략 파라미터(lookback, entry/exit band) 자동 탐색
+## 목표 동작
+- 키움 APP KEY/SECRET만 설정하면 실행
+- 보유 중인 기존 종목과 무관하게(참조/청산 없이) 신규 300만원 포지션만 운용
+- 코스피 상위 10개 대상 중 당일 최적 종목/전략 자동 선택
+- 텔레그램으로 한글 알림(수익률/누적수익률/투자결과)
 
-## 빠른 백테스트 실행(샘플 데이터 자동 생성)
+## 1) 설정 파일 만들기
 ```bash
-python3 kiwoom_stock_agent.py --run-backtest --init-sample-backtest-data --backtest-data-root ./backtest_data
+cp kiwoom_runtime_config.template.json kiwoom_runtime_config.json
 ```
-- config 파일이 없어도 샘플 데이터 기반 백테스트를 실행합니다.
-- 결과 파일은 `./backtest_data/backtest_result_YYYYmmdd_HHMMSS.json` 에 저장됩니다.
 
-## 백테스트 최적화 실행(추천)
+`kiwoom_runtime_config.json`에 아래 값 입력:
+- `app_key`, `app_secret`
+- `telegram.bot_token`, `telegram.chat_id`
+- `runtime.invest_capital_krw` (기본 3000000)
+- 실전 실행 시 `runtime.dry_run=false`
+
+## 2) 단발 실행
 ```bash
-python3 kiwoom_stock_agent.py --optimize-backtest --init-sample-backtest-data --backtest-data-root ./backtest_data
+python3 kiwoom_stock_agent.py --config ./kiwoom_runtime_config.json --live-once
 ```
-- 수수료(`fee_bps`) x 슬리피지(`slippage_bps`) 조합을 전수 탐색합니다.
-- `best`, `top5`, `best_result`를 포함한 결과를 `backtest_optimization_*.json`로 저장합니다.
 
-## 실제 config 사용 백테스트
+## 3) Synology Container Manager (docker compose)
+`docker-compose.synology.yml` 사용:
 ```bash
-python3 kiwoom_stock_agent.py --config <config.json> --run-backtest --backtest-data-root ./backtest_data
+docker compose -f docker-compose.synology.yml up -d
 ```
-- 결과는 `runtime.report_dir/backtest_YYYYmmdd_HHMMSS.json`와 journal(`latest_backtest`)에 저장됩니다.
 
-## 런타임 1회 확인
-```bash
-python3 kiwoom_stock_agent.py --config <config.json> --once
-```
-출력 포함 항목: `strategy`, `preferred_symbols`, `tradable_priority`, `backtest_file`.
-
-## 백테스트 산출 지표
-- 종목별/전략별: `final_equity`, `total_return_pct`, `max_drawdown_pct`, `win_rate`, `trade_count`
-- 거래 로그: 각 전략별 `trades` 배열에 `entry_date`, `exit_date`, `entry_price`, `exit_price`, `qty`, `pnl`, `return_pct` 저장
-- 비용 반영: `fee_bps`, `slippage_bps` 적용
+## 텔레그램 알림 내용
+- 선정 종목
+- 전략
+- 매수가/수량
+- 투자금(300만원)
+- 예상 수익률(백테스트 점수 기반)
+- 누적 수익률
+- 실행 모드(DRY_RUN/LIVE)

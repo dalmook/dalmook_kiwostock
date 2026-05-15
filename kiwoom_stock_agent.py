@@ -2,73 +2,16 @@
 import argparse
 import json
 import os
-import random
-from dataclasses import dataclass
 from datetime import datetime, timezone
-try:
-    from zoneinfo import ZoneInfo
-except Exception:
-    ZoneInfo = None
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import urllib.parse
 import urllib.request
 import urllib.error
 
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
-
-
-
-
-def generate_sample_backtest_data(data_root: str):
-    root = Path(data_root)
-    random.seed(42)
-    specs = {
-        "kospi50": [
-            "005930","000660","005380","012330","035420","051910","006400","068270","207940","035720",
-            "028260","105560","055550","032830","066570","096770","003670","015760","034730","086790",
-            "010950","017670","003550","018260","259960","011200","024110","009150","000270","010130",
-            "323410","003490","000810","329180","000100","011790","030200","004020","000720","009540",
-            "138040","071050","047810","011170","021240","006800","036570","302440","161390","078930"
-        ],
-        "kosdaq100": ["091990", "247540", "066970"],
-    }
-    for universe, symbols in specs.items():
-        udir = root / universe
-        udir.mkdir(parents=True, exist_ok=True)
-        for sym in symbols:
-            rows = []
-            price = 50000.0 + random.randint(1000, 5000)
-            for d in range(120):
-                drift = 0.0011 if universe == "kospi50" else 0.0018
-                shock = random.uniform(-0.02, 0.02)
-                ret = drift + shock
-                open_p = price
-                close_p = max(1000.0, open_p * (1 + ret))
-                high = max(open_p, close_p) * (1 + random.uniform(0, 0.01))
-                low = min(open_p, close_p) * (1 - random.uniform(0, 0.01))
-                rows.append({
-                    "date": f"2025-{(d // 20) + 1:02d}-{(d % 20) + 1:02d}",
-                    "open": round(open_p, 2),
-                    "high": round(high, 2),
-                    "low": round(low, 2),
-                    "close": round(close_p, 2),
-                    "volume": int(100000 + random.randint(0, 250000)),
-                })
-                price = close_p
-            (udir / f"{sym}.json").write_text(json.dumps(rows, ensure_ascii=False, indent=2))
-@dataclass
-class Position:
-    symbol: str
-    qty: int
-    entry_price: float
-    strategy: str
-    entered_at: str
-    stop_price: float
-    tp_price: float
 
 
 class KiwoomRestClient:
@@ -90,17 +33,9 @@ class KiwoomRestClient:
             h["api-id"] = self.cfg.get("tr_id", {}).get(tr_key, tr_key)
         return h
 
-    def _url(self, key: str):
-        return self.base + self.cfg["endpoints"][key]
-
-    def _request(self, method: str, url: str, headers=None, params=None, json_body=None, timeout=10):
+    def _request(self, method: str, url: str, headers=None, json_body=None, timeout=10):
         headers = dict(headers or {})
-        if params:
-            url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-        data = None
-        if json_body is not None:
-            data = json.dumps(json_body).encode("utf-8")
-            headers.setdefault("Content-Type", "application/json; charset=utf-8")
+        data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
         req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -111,14 +46,13 @@ class KiwoomRestClient:
             raise RuntimeError(f"HTTP {e.code} {e.reason}: {raw[:500]}")
 
     def refresh_token(self):
-        endpoint = self._url("token_issue")
         body = {
             "grant_type": "client_credentials",
             "appkey": self.cfg["app_key"],
             "appsecret": self.cfg["app_secret"],
             "secretkey": self.cfg["app_secret"],
         }
-        data = self._request("POST", endpoint, json_body=body, timeout=15)
+        data = self._request("POST", self.base + self.cfg["endpoints"]["token_issue"], json_body=body, timeout=15)
         access = data.get("access_token") or data.get("token")
         if not access:
             raise RuntimeError(f"token response parse failed: {data}")
@@ -126,29 +60,29 @@ class KiwoomRestClient:
         self.cfg["token"]["expires_at"] = now_iso()
 
     def quote(self, symbol: str):
-        url = self.base + "/api/dostk/stkinfo"
-        return self._request("POST", url, headers=self._headers("quote_basic"), json_body={"stk_cd": symbol}, timeout=10)
+        return self._request("POST", self.base + "/api/dostk/stkinfo", headers=self._headers("quote_basic"), json_body={"stk_cd": symbol}, timeout=10)
 
-    def daily(self, symbol: str):
-        return self.quote(symbol)
-
-    def balance(self):
-        url = self.base + "/api/dostk/acnt"
-        return self._request("POST", url, headers=self._headers("balance_eval"), json_body={"qry_tp": "2", "dmst_stex_tp": "KRX"}, timeout=10)
-
-    def order(self, side: str, symbol: str, qty: int, price: float = 0.0, order_type: str = "3"):
-        if qty <= 0:
-            raise ValueError("qty must be positive")
-        body = {
-            "dmst_stex_tp": "KRX",
-            "stk_cd": symbol,
-            "ord_qty": str(int(qty)),
-            "ord_uv": str(int(price)) if price else "",
-            "trde_tp": order_type,
-            "cond_uv": "",
-        }
+    def order(self, side: str, symbol: str, qty: int):
+        body = {"dmst_stex_tp": "KRX", "stk_cd": symbol, "ord_qty": str(int(qty)), "ord_uv": "", "trde_tp": "3", "cond_uv": ""}
         tr = "order_cash_buy" if side == "buy" else "order_cash_sell"
-        return self._request("POST", self._url("order_cash"), headers=self._headers(tr), json_body=body, timeout=10)
+        return self._request("POST", self.base + self.cfg["endpoints"]["order_cash"], headers=self._headers(tr), json_body=body, timeout=10)
+
+
+class TelegramNotifier:
+    def __init__(self, token: str, chat_id: str):
+        self.token = token
+        self.chat_id = chat_id
+
+    def send(self, text: str):
+        if not self.token or not self.chat_id:
+            return
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = json.dumps({"chat_id": self.chat_id, "text": text}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=8).read()
+        except Exception:
+            pass
 
 
 class Backtester:
@@ -402,210 +336,98 @@ class Agent:
         self.backtest_data_root = backtest_data_root
         self.cfg_path = Path(cfg_path)
         self.cfg = json.loads(self.cfg_path.read_text())
-        self.cfg.setdefault("tr_id", {})
-        self.cfg["tr_id"].setdefault("quote_basic", "ka10001")
-        self.cfg["tr_id"].setdefault("balance_eval", "kt00018")
         self.client = KiwoomRestClient(self.cfg)
-
-        runtime = self.cfg["runtime"]
-        self.report_dir = Path(runtime["report_dir"])
-        self.report_dir.mkdir(parents=True, exist_ok=True)
-        self.journal_path = Path(runtime["journal_path"])
-        self.dry_run = bool(runtime.get("dry_run", True))
-
+        self.journal_path = Path(self.cfg["runtime"]["journal_path"])
         self.journal = self._load_journal()
+        tcfg = self.cfg.get("telegram", {})
+        self.notifier = TelegramNotifier(tcfg.get("bot_token", ""), tcfg.get("chat_id", ""))
 
     def _load_journal(self):
         if self.journal_path.exists():
             return json.loads(self.journal_path.read_text())
-        return {
-            "created_at": now_iso(),
-            "positions": [],
-            "trades": [],
-            "daily": {},
-            "weights": {"A": 0.15, "B": 0.35, "C": 0.05, "D": 0.45},
-            "regime": "RISK_OFF"
-        }
+        return {"created_at": now_iso(), "orders": [], "daily_pnl": [], "invested_capital": 3_000_000, "cum_return_pct": 0.0}
 
     def _save(self):
+        self.journal_path.parent.mkdir(parents=True, exist_ok=True)
         self.journal_path.write_text(json.dumps(self.journal, ensure_ascii=False, indent=2))
         self.cfg_path.write_text(json.dumps(self.cfg, ensure_ascii=False, indent=2))
 
-    @staticmethod
-    def _num(v, default=0.0):
-        try:
-            if isinstance(v, str):
-                v = v.replace(",", "").strip()
-            return float(v)
-        except Exception:
-            return default
+    def _top10(self):
+        return ["005930","000660","005380","000270","207940","035420","051910","068270","105560","035720"]
 
-    def _is_regular_session(self):
-        if not self.cfg.get("runtime", {}).get("trade_only_regular_session", True):
-            return True, "disabled"
-        if ZoneInfo is None:
-            return False, "timezone unavailable"
-        kst = datetime.now(ZoneInfo("Asia/Seoul"))
-        if kst.weekday() >= 5:
-            return False, "weekend"
-        hhmm = kst.hour * 100 + kst.minute
-        if 900 <= hhmm <= 1520:
-            return True, kst.strftime("%H:%M KST")
-        return False, kst.strftime("%H:%M KST outside regular session")
-
-    def _scan_symbols(self):
-        watch = self.cfg["universe"].get("watch_symbols", [])
-        if not watch:
-            return []
-        limit = int(self.cfg.get("runtime", {}).get("scan_limit", 8) or 8)
-        limit = max(1, min(limit, len(watch)))
-        cursor = int(self.journal.get("scan_cursor", 0) or 0) % len(watch)
-        if limit >= len(watch):
-            symbols = watch
-            next_cursor = 0
-        else:
-            symbols = [watch[(cursor + i) % len(watch)] for i in range(limit)]
-            next_cursor = (cursor + limit) % len(watch)
-        self.journal["scan_cursor"] = next_cursor
-        return symbols
-
-    def select_strategy(self, regime: str) -> str:
+    def _select_symbol_strategy(self):
         backtest = self.journal.get("latest_backtest") or {}
-        global_best = backtest.get("best_global")
-        mapping = {
-            "TREND_UP": "trend_momentum",
-            "RANGE": "mean_reversion",
-            "HIGH_VOL_EVENT": "breakout",
-            "RISK_OFF": "risk_off_cash",
+        uni = (backtest.get("universes") or {}).get("kospi_top10") or {}
+        best = None
+        for sym, info in (uni.get("symbol_results") or {}).items():
+            for st, m in (info.get("strategies") or {}).items():
+                row = {"symbol": sym, "strategy": st, "score": float(m.get("total_return_pct", -999)), "params": m.get("params") or {}}
+                if best is None or row["score"] > best["score"]:
+                    best = row
+        if best:
+            return best
+        return {"symbol": "005930", "strategy": "trend_momentum", "score": 0.0, "params": {}}
+
+    def run_live_once(self):
+        capital = int(self.cfg.get("runtime", {}).get("invest_capital_krw", 3_000_000))
+        pick = self._select_symbol_strategy()
+        q = self.client.quote(pick["symbol"])
+        price = abs(float(str(q.get("cur_prc", "0")).replace(",", "") or 0))
+        qty = int(capital // price) if price > 0 else 0
+        order_resp = {"skipped": True, "reason": "qty=0 or dry_run"}
+        dry_run = bool(self.cfg.get("runtime", {}).get("dry_run", True))
+        if qty > 0 and not dry_run:
+            order_resp = self.client.order("buy", pick["symbol"], qty)
+
+        est_value = qty * price
+        pnl_pct = round(pick["score"], 4)
+        result = {
+            "ts": now_iso(),
+            "symbol": pick["symbol"],
+            "strategy": pick["strategy"],
+            "params": pick["params"],
+            "price": price,
+            "qty": qty,
+            "invest_capital": capital,
+            "est_position_value": est_value,
+            "expected_return_pct": pnl_pct,
+            "order_response": order_resp,
+            "dry_run": dry_run,
         }
-        if global_best and regime in ("TREND_UP", "RANGE", "HIGH_VOL_EVENT"):
-            return global_best
-        return mapping.get(regime, "risk_off_cash")
-
-
-
-    def run_backtest_and_store(self, universes: Optional[List[str]] = None):
-        universes = universes or ["kospi50", "kosdaq100"]
-        bt = Backtester(self.backtest_data_root)
-        result = bt.run(universes)
-        self.journal["latest_backtest"] = result
-        out = self.report_dir / f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        out.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-        self.journal["latest_backtest_file"] = str(out)
+        self.journal.setdefault("orders", []).append(result)
+        self.journal["cum_return_pct"] = round((self.journal.get("cum_return_pct", 0.0) + pnl_pct), 4)
         self._save()
-        return result, out
 
-    def _select_symbols_from_backtest(self, regime: str, topn: int = 20) -> List[str]:
-        backtest = self.journal.get("latest_backtest") or {}
-        universes = backtest.get("universes") or {}
-        strategy = self.select_strategy(regime)
-        ranking = []
-        for _, uni in universes.items():
-            for sym, info in (uni.get("symbol_results") or {}).items():
-                sc = ((info.get("strategies") or {}).get(strategy) or {}).get("total_return_pct")
-                if isinstance(sc, (int, float)):
-                    ranking.append((sym, sc))
-        ranking.sort(key=lambda x: x[1], reverse=True)
-        return [sym for sym, _ in ranking[:topn]]
-    def classify_regime(self):
-        watch = self._scan_symbols()
-        rows = []
-        errors = []
-        for sym in watch:
-            try:
-                q = self.client.quote(sym)
-                row = {"symbol": sym, "name": q.get("stk_nm", sym), "price": abs(self._num(q.get("cur_prc"))), "changePct": self._num(q.get("flu_rt")), "volume": abs(self._num(q.get("trde_qty")))}
-                if row["price"] <= 0:
-                    errors.append(f"{sym}:zero_or_closed_quote")
-                    continue
-                rows.append(row)
-            except Exception as e:
-                errors.append(f"{sym}:{str(e)[:80]}")
-        if not rows:
-            score = {"Trend": 0, "Volatility": 80, "Breadth": 0, "Flow": 0}
-            return "MARKET_CLOSED_OR_API_DEGRADED", score, rows, errors
-        pos = sum(1 for r in rows if r["changePct"] > 0)
-        avg = sum(r["changePct"] for r in rows) / len(rows)
-        breadth = round(pos / len(rows) * 100)
-        trend = max(0, min(100, round(50 + avg * 10)))
-        vol = max(20, min(90, round(sum(abs(r["changePct"]) for r in rows) / len(rows) * 18)))
-        score = {"Trend": trend, "Volatility": vol, "Breadth": breadth, "Flow": breadth}
-        if vol > 70:
-            regime = "HIGH_VOL_EVENT"
-        elif breadth >= 62 and avg > 0.4:
-            regime = "TREND_UP"
-        elif breadth <= 35 and avg < -0.4:
-            regime = "RISK_OFF"
-        else:
-            regime = "RANGE"
-        return regime, score, rows, errors
+        msg = (
+            f"[키움 자동매매 알림]\n"
+            f"선정종목: {pick['symbol']}\n"
+            f"전략: {pick['strategy']}\n"
+            f"매수가(참고): {price:,.0f}원 / 수량: {qty}주\n"
+            f"투자금: {capital:,.0f}원\n"
+            f"예상 수익률(백테스트 기반): {pnl_pct:.2f}%\n"
+            f"누적 수익률: {self.journal.get('cum_return_pct',0.0):.2f}%\n"
+            f"실행모드: {'DRY_RUN' if dry_run else 'LIVE'}"
+        )
+        self.notifier.send(msg)
+        return result
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="/home/node/.openclaw/workspace/kiwoom_rest_config.json")
-    ap.add_argument("--once", action="store_true")
-    ap.add_argument("--backtest-data-root", default="./backtest_data")
-    ap.add_argument("--run-backtest", action="store_true")
-    ap.add_argument("--init-sample-backtest-data", action="store_true")
-    ap.add_argument("--optimize-backtest", action="store_true")
+    ap.add_argument("--config", default="./kiwoom_runtime_config.json")
+    ap.add_argument("--live-once", action="store_true")
     args = ap.parse_args()
-
-    if args.init_sample_backtest_data:
-        generate_sample_backtest_data(args.backtest_data_root)
-
-    if (args.run_backtest or args.optimize_backtest) and not os.path.exists(args.config):
-        if args.optimize_backtest:
-            result = optimize_backtest(args.backtest_data_root, ["kospi50", "kosdaq100"])
-            out = Path(args.backtest_data_root) / f"backtest_optimization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            out.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-            print(json.dumps({"saved_to": str(out), "result": result}, ensure_ascii=False, indent=2))
-            return
-        bt = Backtester(args.backtest_data_root)
-        result = bt.run(["kospi50", "kosdaq100"])
-        out = Path(args.backtest_data_root) / f"backtest_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        out.write_text(json.dumps(result, ensure_ascii=False, indent=2))
-        print(json.dumps({"saved_to": str(out), "result": result}, ensure_ascii=False, indent=2))
-        return
 
     if not os.path.exists(args.config):
         raise SystemExit("config not found")
 
-    agent = Agent(args.config, backtest_data_root=args.backtest_data_root)
+    agent = Agent(args.config)
+    agent.client.refresh_token()
+    agent._save()
 
-    if args.optimize_backtest:
-        opt = optimize_backtest(args.backtest_data_root, ["kospi50", "kosdaq100"])
-        out = agent.report_dir / f"backtest_optimization_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        out.write_text(json.dumps(opt, ensure_ascii=False, indent=2))
-        agent.journal["latest_backtest_optimization"] = opt
-        agent.journal["latest_backtest_optimization_file"] = str(out)
-        agent.journal["latest_backtest"] = opt.get("best_result")
-        agent.journal["latest_backtest_file"] = str(out)
-        agent._save()
-        print(json.dumps({"saved_to": str(out), "result": opt}, ensure_ascii=False, indent=2))
+    if args.live_once:
+        print(json.dumps(agent.run_live_once(), ensure_ascii=False, indent=2))
         return
-
-    if args.run_backtest:
-        result, out = agent.run_backtest_and_store(["kospi50", "kosdaq100"])
-        print(json.dumps({"saved_to": str(out), "result": result}, ensure_ascii=False, indent=2))
-        return
-
-    if args.once:
-        regime, score, rows, errors = agent.classify_regime()
-        strategy = agent.select_strategy(regime)
-        backtest_symbols = agent._select_symbols_from_backtest(regime, topn=20)
-        live_symbols = {r.get("symbol") for r in rows}
-        tradable_priority = [s for s in backtest_symbols if s in live_symbols]
-        print(json.dumps({
-            "regime": regime,
-            "score": score,
-            "strategy": strategy,
-            "backtest_file": agent.journal.get("latest_backtest_file"),
-            "preferred_symbols": backtest_symbols[:10],
-            "tradable_priority": tradable_priority[:5],
-            "quotes": rows[:5],
-            "errors": errors[:3]
-        }, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
