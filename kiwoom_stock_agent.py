@@ -88,6 +88,23 @@ class KiwoomRestClient:
         return self._request("POST", self.base + "/api/dostk/stkinfo", headers={**self._headers("quote_basic"), "Content-Type": "application/json; charset=utf-8"}, json_body={"stk_cd": symbol}, timeout=10)
 
 
+class TelegramNotifier:
+    def __init__(self, token: str, chat_id: str):
+        self.token = token
+        self.chat_id = chat_id
+
+    def send(self, text: str):
+        if not self.token or not self.chat_id:
+            return
+        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        payload = json.dumps({"chat_id": self.chat_id, "text": text}).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            urllib.request.urlopen(req, timeout=8).read()
+        except Exception:
+            pass
+
+
 class Agent:
     def __init__(self, cfg_path: str):
         self.cfg_path = Path(cfg_path)
