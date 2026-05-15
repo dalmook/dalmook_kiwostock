@@ -1,0 +1,81 @@
+{
+  "generated_at": "2026-05-13T23:04:15.466777+00:00",
+  "universes": {
+    "kospi200": {
+      "symbol_count": 3,
+      "avg_scores": {
+        "trend_momentum": 1.333,
+        "mean_reversion": -4.2611,
+        "breakout": 0.4048
+      },
+      "symbol_best": {
+        "000660": {
+          "scores": {
+            "trend_momentum": -0.0717,
+            "mean_reversion": -2.9497,
+            "breakout": -0.3036
+          },
+          "best": "trend_momentum"
+        },
+        "005930": {
+          "scores": {
+            "trend_momentum": 1.0869,
+            "mean_reversion": -4.9652,
+            "breakout": 0.083
+          },
+          "best": "trend_momentum"
+        },
+        "035420": {
+          "scores": {
+            "trend_momentum": 2.9838,
+            "mean_reversion": -4.8684,
+            "breakout": 1.4351
+          },
+          "best": "trend_momentum"
+        }
+      },
+      "universe_best": "trend_momentum"
+    },
+    "kosdaq100": {
+      "symbol_count": 3,
+      "avg_scores": {
+        "trend_momentum": 3.42,
+        "mean_reversion": -6.2849,
+        "breakout": 2.4157
+      },
+      "symbol_best": {
+        "066970": {
+          "scores": {
+            "trend_momentum": 11.6353,
+            "mean_reversion": -9.0601,
+            "breakout": 5.7615
+          },
+          "best": "trend_momentum"
+        },
+        "091990": {
+          "scores": {
+            "trend_momentum": -8.8903,
+            "mean_reversion": -1.6792,
+            "breakout": -1.0523
+          },
+          "best": "breakout"
+        },
+        "247540": {
+          "scores": {
+            "trend_momentum": 7.5151,
+            "mean_reversion": -8.1154,
+            "breakout": 2.5378
+          },
+          "best": "trend_momentum"
+        }
+      },
+      "universe_best": "trend_momentum"
+    }
+  },
+  "best_global": "trend_momentum",
+  "global_scores": {
+    "trend_momentum": 2.3765,
+    "mean_reversion": -5.273,
+    "breakout": 1.4102
+  }
+}
