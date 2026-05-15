@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import urllib.parse
 import urllib.request
 import urllib.error
 
