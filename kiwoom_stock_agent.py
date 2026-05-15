@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -98,6 +97,8 @@ class Agent:
         self.client = KiwoomRestClient(self.cfg)
         self.journal_path = Path(self.cfg["runtime"]["journal_path"])
         self.journal = self._load_journal()
+        tcfg = self.cfg.get("telegram", {})
+        self.notifier = TelegramNotifier(tcfg.get("bot_token", ""), tcfg.get("chat_id", ""))
 
     def _load_journal(self):
         if self.journal_path.exists():
