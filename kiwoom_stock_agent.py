@@ -114,6 +114,7 @@ class Agent:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="./kiwoom_runtime_config.json")
+    ap.add_argument("--live-once", action="store_true", help="호환 옵션(현재 1회 실행 기본)")
     args = ap.parse_args()
 
     if not os.path.exists(args.config):
@@ -122,7 +123,7 @@ def main():
     agent = Agent(args.config)
     agent.client.refresh_token()
     agent._save()
-    print(json.dumps({"ok": True, "token_mode": agent.cfg.get("runtime", {}).get("token_content_type")}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "token_mode": agent.cfg.get("runtime", {}).get("token_content_type"), "live_once": bool(args.live_once)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

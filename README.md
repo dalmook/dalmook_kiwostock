@@ -12,3 +12,9 @@ python3 kiwoom_stock_agent.py --config ./kiwoom_runtime_config.json
 ## 설정
 - `kiwoom_runtime_config.template.json` 복사 후 키 입력
 - `runtime.token_content_type` 기본값: `form`
+
+
+호환 실행(기존 compose 설정):
+```bash
+python3 kiwoom_stock_agent.py --config ./kiwoom_runtime_config.json --live-once
+```
