@@ -8,4 +8,4 @@ services:
       - ./:/app
     command: >
       sh -c "python3 kiwoom_stock_agent.py --config /app/kiwoom_runtime_config.json --live-once"
-    restart: unless-stopped
+    restart: on-failure:3

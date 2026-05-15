@@ -33,9 +33,15 @@ class KiwoomRestClient:
             h["api-id"] = self.cfg.get("tr_id", {}).get(tr_key, tr_key)
         return h
 
-    def _request(self, method: str, url: str, headers=None, json_body=None, timeout=10):
+    def _request(self, method: str, url: str, headers=None, json_body=None, form_body=None, timeout=10):
         headers = dict(headers or {})
-        data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
+        data = None
+        if form_body is not None:
+            data = urllib.parse.urlencode(form_body).encode("utf-8")
+            headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        elif json_body is not None:
+            data = json.dumps(json_body).encode("utf-8")
+            headers.setdefault("Content-Type", "application/json; charset=utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -52,7 +58,11 @@ class KiwoomRestClient:
             "appsecret": self.cfg["app_secret"],
             "secretkey": self.cfg["app_secret"],
         }
-        data = self._request("POST", self.base + self.cfg["endpoints"]["token_issue"], json_body=body, timeout=15)
+        token_ct = self.cfg.get("runtime", {}).get("token_content_type", "form")
+        if token_ct == "json":
+            data = self._request("POST", self.base + self.cfg["endpoints"]["token_issue"], headers={"Content-Type": "application/json; charset=utf-8"}, json_body=body, timeout=15)
+        else:
+            data = self._request("POST", self.base + self.cfg["endpoints"]["token_issue"], headers={"Content-Type": "application/x-www-form-urlencoded"}, form_body=body, timeout=15)
         access = data.get("access_token") or data.get("token")
         if not access:
             raise RuntimeError(f"token response parse failed: {data}")
@@ -85,255 +95,8 @@ class TelegramNotifier:
             pass
 
 
-class Backtester:
-    def __init__(self, data_root: str, fee_bps: float = 5.0, slippage_bps: float = 3.0, initial_cash: float = 10_000_000.0):
-        self.data_root = Path(data_root)
-        self.fee_bps = fee_bps
-        self.slippage_bps = slippage_bps
-        self.initial_cash = initial_cash
-
-    @staticmethod
-    def _num(v, default=0.0):
-        try:
-            if isinstance(v, str):
-                v = v.replace(",", "").strip()
-            return float(v)
-        except Exception:
-            return default
-
-    def _load_series(self, universe: str) -> Dict[str, List[dict]]:
-        path = self.data_root / universe
-        if not path.exists():
-            raise FileNotFoundError(f"backtest data path not found: {path}")
-        out = {}
-        for f in sorted(path.glob("*.json")):
-            rows = json.loads(f.read_text())
-            out[f.stem] = rows
-        if not out:
-            raise RuntimeError(f"no json files under {path}")
-        return out
-
-    def _signal(self, closes: List[float], i: int, strategy: str, params: dict) -> int:
-        lookback = int(params.get("lookback", 20))
-        if i < max(lookback + 1, 6):
-            return 0
-        px = closes[i]
-        if strategy == "trend_momentum":
-            ma = sum(closes[i-lookback:i]) / lookback
-            return 1 if px > ma else 0
-        if strategy == "mean_reversion":
-            ma = sum(closes[i-lookback:i]) / lookback
-            band = float(params.get("entry_band", 0.985))
-            return 1 if px < ma * band else 0
-        recent_high = max(closes[i-lookback:i])
-        return 1 if px >= recent_high else 0
-
-    def _simulate(self, rows: List[dict], strategy: str, params: Optional[dict] = None) -> dict:
-        params = params or {}
-        closes = [self._num(r.get("close")) for r in rows if self._num(r.get("close")) > 0]
-        dates = [r.get("date") for r in rows if self._num(r.get("close")) > 0]
-        if len(closes) < 25:
-            return {
-                "final_equity": self.initial_cash,
-                "total_return_pct": 0.0,
-                "max_drawdown_pct": 0.0,
-                "win_rate": 0.0,
-                "trade_count": 0,
-                "equity_curve": [],
-                "trades": [],
-            }
-
-        cash = self.initial_cash
-        qty = 0
-        entry_price = 0.0
-        entry_date = None
-        equity_curve = []
-        trades = []
-        fee = self.fee_bps / 10000.0
-        slip = self.slippage_bps / 10000.0
-
-        for i in range(len(closes)):
-            signal = self._signal(closes, i, strategy, params)
-            px = closes[i]
-            dt = dates[i]
-
-            if qty == 0 and signal == 1:
-                buy_px = px * (1 + slip)
-                qty = int(cash // buy_px)
-                if qty > 0:
-                    cost = qty * buy_px
-                    fee_amt = cost * fee
-                    cash -= (cost + fee_amt)
-                    entry_price = buy_px
-                    entry_date = dt
-            elif qty > 0:
-                exit_lb = int(params.get("exit_lookback", 5))
-                ma_exit = sum(closes[max(0, i-exit_lb):i+1]) / min(i+1, exit_lb + 1)
-                exit_band = float(params.get("exit_band", 0.99))
-                exit_signal = signal == 0 or px < ma_exit * exit_band
-                if exit_signal:
-                    sell_px = px * (1 - slip)
-                    gross = qty * sell_px
-                    fee_amt = gross * fee
-                    pnl = gross - fee_amt - (qty * entry_price)
-                    cash += (gross - fee_amt)
-                    trades.append({
-                        "entry_date": entry_date,
-                        "exit_date": dt,
-                        "entry_price": round(entry_price, 4),
-                        "exit_price": round(sell_px, 4),
-                        "qty": qty,
-                        "pnl": round(pnl, 2),
-                        "return_pct": round((sell_px - entry_price) / entry_price * 100, 4),
-                        "strategy": strategy,
-                    })
-                    qty = 0
-                    entry_price = 0.0
-                    entry_date = None
-
-            equity = cash + qty * px
-            equity_curve.append(equity)
-
-        if qty > 0:
-            px = closes[-1] * (1 - slip)
-            gross = qty * px
-            fee_amt = gross * fee
-            pnl = gross - fee_amt - (qty * entry_price)
-            cash += (gross - fee_amt)
-            trades.append({
-                "entry_date": entry_date,
-                "exit_date": dates[-1],
-                "entry_price": round(entry_price, 4),
-                "exit_price": round(px, 4),
-                "qty": qty,
-                "pnl": round(pnl, 2),
-                "return_pct": round((px - entry_price) / entry_price * 100, 4),
-                "strategy": strategy,
-            })
-            equity_curve[-1] = cash
-
-        final_equity = equity_curve[-1] if equity_curve else self.initial_cash
-        total_return_pct = (final_equity / self.initial_cash - 1) * 100
-
-        peak = self.initial_cash
-        mdd = 0.0
-        for eq in equity_curve:
-            peak = max(peak, eq)
-            dd = (eq / peak - 1) * 100
-            mdd = min(mdd, dd)
-
-        wins = sum(1 for t in trades if t["pnl"] > 0)
-        trade_count = len(trades)
-        win_rate = (wins / trade_count * 100) if trade_count else 0.0
-
-        return {
-            "final_equity": round(final_equity, 2),
-            "total_return_pct": round(total_return_pct, 4),
-            "max_drawdown_pct": round(mdd, 4),
-            "win_rate": round(win_rate, 2),
-            "trade_count": trade_count,
-            "trades": trades,
-        }
-
-
-    def _param_grid(self, strategy: str):
-        if strategy == "trend_momentum":
-            return [{"lookback": l, "exit_lookback": e, "exit_band": b} for l in (10, 20, 40) for e in (3, 5, 10) for b in (0.985, 0.99)]
-        if strategy == "mean_reversion":
-            return [{"lookback": l, "entry_band": eb, "exit_lookback": e, "exit_band": b} for l in (5, 10, 20) for eb in (0.975, 0.98, 0.985) for e in (3, 5, 10) for b in (0.995, 1.0)]
-        return [{"lookback": l, "exit_lookback": e, "exit_band": b} for l in (10, 20, 40) for e in (3, 5, 10) for b in (0.985, 0.99)]
-
-    def _best_simulation(self, rows: List[dict], strategy: str) -> dict:
-        best = None
-        for params in self._param_grid(strategy):
-            m = self._simulate(rows, strategy, params)
-            score = (m.get("total_return_pct", -999), m.get("win_rate", 0.0), -abs(m.get("max_drawdown_pct", 0.0)))
-            if best is None or score > best[0]:
-                best = (score, params, m)
-        out = dict(best[2])
-        out["params"] = best[1]
-        return out
-    def run(self, universes: List[str]) -> dict:
-        strategy_pool = ["trend_momentum", "mean_reversion", "breakout"]
-        result = {
-            "generated_at": now_iso(),
-            "assumptions": {"fee_bps": self.fee_bps, "slippage_bps": self.slippage_bps, "initial_cash": self.initial_cash},
-            "universes": {},
-            "best_global": None,
-        }
-        global_returns = {s: [] for s in strategy_pool}
-
-        for uni in universes:
-            data = self._load_series(uni)
-            per_symbol = {}
-            for sym, rows in data.items():
-                strategies = {}
-                for st in strategy_pool:
-                    m = self._best_simulation(rows, st)
-                    strategies[st] = m
-                    global_returns[st].append(m["total_return_pct"])
-                best = max(strategies.items(), key=lambda x: x[1]["total_return_pct"])[0]
-                per_symbol[sym] = {"strategies": strategies, "best": best}
-
-            avg = {}
-            for st in strategy_pool:
-                vals = [per_symbol[s]["strategies"][st]["total_return_pct"] for s in per_symbol]
-                avg[st] = round(sum(vals) / max(1, len(vals)), 4)
-
-            result["universes"][uni] = {
-                "symbol_count": len(per_symbol),
-                "avg_total_return_pct": avg,
-                "symbol_results": per_symbol,
-                "universe_best": max(avg.items(), key=lambda x: x[1])[0],
-            }
-
-        global_avg = {s: round(sum(vs) / max(1, len(vs)), 4) for s, vs in global_returns.items()}
-        result["best_global"] = max(global_avg.items(), key=lambda x: x[1])[0]
-        result["global_avg_total_return_pct"] = global_avg
-        return result
-
-
-def optimize_backtest(data_root: str, universes: Optional[List[str]] = None):
-    universes = universes or ["kospi50", "kosdaq100"]
-    fee_grid = [3.0, 5.0, 8.0, 12.0]
-    slippage_grid = [1.0, 3.0, 5.0, 8.0]
-    initial_cash = 10_000_000.0
-
-    trials = []
-    best = None
-    for fee in fee_grid:
-        for slip in slippage_grid:
-            bt = Backtester(data_root, fee_bps=fee, slippage_bps=slip, initial_cash=initial_cash)
-            r = bt.run(universes)
-            score = float((r.get("global_avg_total_return_pct") or {}).get(r.get("best_global"), -999.0))
-            trial = {
-                "fee_bps": fee,
-                "slippage_bps": slip,
-                "best_global": r.get("best_global"),
-                "global_avg_total_return_pct": r.get("global_avg_total_return_pct"),
-                "score": round(score, 4),
-            }
-            trials.append(trial)
-            if best is None or score > best["score"]:
-                best = trial
-
-    best_bt = Backtester(data_root, fee_bps=best["fee_bps"], slippage_bps=best["slippage_bps"], initial_cash=initial_cash)
-    best_result = best_bt.run(universes)
-
-    out = {
-        "generated_at": now_iso(),
-        "universes": universes,
-        "search_space": {"fee_bps": fee_grid, "slippage_bps": slippage_grid},
-        "best": best,
-        "top5": sorted(trials, key=lambda x: x["score"], reverse=True)[:5],
-        "best_result": best_result,
-    }
-    return out
-
-
 class Agent:
-    def __init__(self, cfg_path: str, backtest_data_root: str = "./backtest_data"):
-        self.backtest_data_root = backtest_data_root
+    def __init__(self, cfg_path: str):
         self.cfg_path = Path(cfg_path)
         self.cfg = json.loads(self.cfg_path.read_text())
         self.client = KiwoomRestClient(self.cfg)
@@ -422,8 +185,14 @@ def main():
         raise SystemExit("config not found")
 
     agent = Agent(args.config)
-    agent.client.refresh_token()
-    agent._save()
+    try:
+        agent.client.refresh_token()
+        agent._save()
+    except Exception as e:
+        print(f"[warn] token refresh failed: {e}")
+        # 토큰 실패 시 무한 재시작 루프를 줄이기 위해 live-once가 아니면 종료
+        if not args.live_once:
+            raise
 
     if args.live_once:
         print(json.dumps(agent.run_live_once(), ensure_ascii=False, indent=2))

@@ -15,7 +15,8 @@
   "runtime": {
     "journal_path": "./runtime/journal.json",
     "dry_run": true,
-    "invest_capital_krw": 3000000
+    "invest_capital_krw": 3000000,
+    "token_content_type": "form"
   },
   "telegram": {
     "bot_token": "YOUR_TELEGRAM_BOT_TOKEN",
