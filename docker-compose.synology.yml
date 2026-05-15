@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  kiwoom-agent:
+    image: python:3.11-slim
+    container_name: kiwoom-agent
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: >
+      sh -c "python3 kiwoom_stock_agent.py --config /app/kiwoom_runtime_config.json --loop --interval 60"
+    restart: unless-stopped
